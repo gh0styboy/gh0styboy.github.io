@@ -1,0 +1,4 @@
+base_url = "https://www.gh0styboy.xyz/pages/"
+title = "gh0stboy."
+compile_sass = false
+build_search_index = false
