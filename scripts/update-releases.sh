@@ -1,59 +1,111 @@
 #!/bin/sh
 set -eu
 
-command -v yt-dlp >/dev/null 2>&1 || {
-  printf '%s\n' "error: install yt-dlp first, then rerun this script" >&2
-  exit 1
+profile="https://soundcloud.com/gh0styyx"
+
+for cmd in yt-dlp jq; do
+  command -v "$cmd" >/dev/null 2>&1 || {
+    printf 'error: install %s first\n' "$cmd" >&2
+    exit 1
+  }
+done
+
+mkdir -p data content
+
+tmpdir=$(mktemp -d)
+trap 'rm -rf "$tmpdir"' EXIT HUP INT TERM
+
+metadata_file="$tmpdir/profile.json"
+releases_file="$tmpdir/releases.jsonl"
+
+yt-dlp --yes-playlist --dump-single-json "$profile" > "$metadata_file"
+: > "$releases_file"
+
+toml_quote() {
+  jq -Rn --arg value "$1" '$value'
 }
 
-mkdir -p data
+jq -c '.entries[]? | select(.)' "$metadata_file" |
+while IFS= read -r track; do
+  track_json="$tmpdir/track.json"
+  printf '%s\n' "$track" > "$track_json"
 
-python3 - <<'PY'
-import json
-import subprocess
-from pathlib import Path
+  track_id=$(jq -r '.id // empty' "$track_json" |
+    sed 's/[^a-zA-Z0-9_-]//g')
+  [ -n "$track_id" ] || continue
 
-profile = "https://soundcloud.com/gh0styyx"
+  title=$(jq -r '.title // "untitled"' "$track_json")
+  track_url=$(jq -r '.webpage_url // .url // empty' "$track_json")
+  date=$(jq -r '.release_date // .upload_date // empty' "$track_json")
+  description=$(jq -r '.description // empty' "$track_json")
 
-result = subprocess.run(
-    ["yt-dlp", "--yes-playlist", "--dump-single-json", profile],
-    check=True,
-    capture_output=True,
-    text=True,
-)
-profile_data = json.loads(result.stdout)
+  if printf '%s' "$date" | grep -Eq '^[0-9]{8}$'; then
+    date=$(printf '%s' "$date" |
+      sed 's/^\(....\)\(..\)\(..\)$/\1-\2-\3/')
+  fi
 
-releases = []
-for track in profile_data.get("entries", []):
-    if not track:
-        continue
+  genre=$(jq -r '.genre // empty' "$track_json")
 
-    date = track.get("release_date") or track.get("upload_date") or ""
-    if len(date) == 8 and date.isdigit():
-        date = f"{date[:4]}-{date[4:6]}-{date[6:8]}"
+  artwork=$(jq -r '
+    .thumbnail //
+    (
+      [.thumbnails[]?]
+      | sort_by((.width // 0) * (.height // 0))
+      | last
+      | .url // empty
+    ) //
+    empty
+  ' "$track_json")
 
-    artwork = track.get("thumbnail") or ""
-    if not artwork:
-        thumbnails = track.get("thumbnails") or []
-        if thumbnails:
-            artwork = max(
-                thumbnails,
-                key=lambda item: (item.get("width") or 0) * (item.get("height") or 0),
-            ).get("url", "")
+  page="releases/$track_id/"
+  content_file="content/release-$track_id.md"
 
-    releases.append({
-        "title": track.get("title") or "",
-        "url": track.get("webpage_url") or track.get("url") or "",
-        "date": date,
-        "genre": track.get("genre") or "",
-        "artwork": artwork,
-    })
+  {
+    printf '%s\n' '+++'
+    printf 'title = %s\n' "$(toml_quote "$title")"
+    printf 'path = %s\n' "$(toml_quote "releases/$track_id")"
+    printf '%s\n' 'template = "song.html"'
+    printf '\n%s\n' '[extra]'
+    printf 'artwork = %s\n' "$(toml_quote "$artwork")"
+    printf 'genre = %s\n' "$(toml_quote "$genre")"
+    printf 'release_date = %s\n' "$(toml_quote "$date")"
+    printf 'description = %s\n' "$(toml_quote "$description")"
+    printf '\n%s\n' '[extra.platforms]'
 
-Path("data/releases.json").write_text(
-    json.dumps(releases, ensure_ascii=False, indent=2) + "\n"
-)
-print(f"wrote {len(releases)} releases to data/releases.json")
-print(f"tracks with artwork: {sum(bool(r['artwork']) for r in releases)}")
-print(f"tracks with genre: {sum(bool(r['genre']) for r in releases)}")
-PY
+    if [ -n "$track_url" ]; then
+      printf 'soundcloud = %s\n' "$(toml_quote "$track_url")"
+    fi
+
+    printf '%s\n' '+++' ''
+  } > "$content_file"
+
+  jq -n \
+    --arg id "$track_id" \
+    --arg title "$title" \
+    --arg url "$track_url" \
+    --arg date "$date" \
+    --arg genre "$genre" \
+    --arg artwork "$artwork" \
+    --arg description "$description" \
+    --arg page "$page" \
+    '{
+      id: $id,
+      title: $title,
+      url: $url,
+      date: $date,
+      genre: $genre,
+      artwork: $artwork,
+      description: $description,
+      page: $page
+    }' >> "$releases_file"
+done
+
+if [ -s "$releases_file" ]; then
+  jq -s '.' "$releases_file" > data/releases.json
+else
+  printf '%s\n' '[]' > data/releases.json
+fi
+
+count=$(jq 'length' data/releases.json)
+printf 'generated %s release pages\n' "$count"
 

@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+
+{% block title %}{{ page.title }} — gh0stboy{% endblock title %}
+
+{% block content %}
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#000000">
+    <title>{{ page.title | lower }} — gh0stboy</title>
+    <link rel="stylesheet" href="{{ get_url(path='style.css') }}">
+  </head>
+  <body>
+    <main class="song-page">
+<a class="back-link" href="{{ config.base_url }}">← back to homepage</a>
+
+      <article class="song-card">
+        {% if page.extra.artwork %}
+        <img
+          class="song-artwork"
+          src="{{ page.extra.artwork }}"
+          alt="{{ page.title | lower }} artwork"
+        >
+        {% endif %}
+
+        <div class="song-details">
+          <p class="song-kicker">gh0stboy / release</p>
+          <h1>{{ page.title | lower }}</h1>
+
+          {% if page.extra.release_date %}
+          <p class="song-meta">{{ page.extra.release_date }}</p>
+          {% endif %}
+
+          {% if page.extra.genre %}
+          <p class="song-meta">{{ page.extra.genre | lower }}</p>
+          {% endif %}
+
+	  {% if page.extra.description %}
+	<div class="song-description">{{ page.extra.description }}</div>
+	{% endif %}
+
+          <nav class="platform-links" aria-label="listen to this release">
+            {% for platform, url in page.extra.platforms %}
+            <a href="{{ url }}" target="_blank" rel="noopener noreferrer">
+              {{ platform | replace(from="-", to=" ") | lower }}
+              <span aria-hidden="true">↗</span>
+            </a>
+            {% endfor %}
+          </nav>
+        </div>
+      </article>
+    </main>
+  </body>
+</html>
+{% endblock content %}
+
+
